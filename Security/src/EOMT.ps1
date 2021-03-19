@@ -417,12 +417,6 @@ function Run-MSERT {
         [switch]$DoNotRemediate
     )
     $Stage = "MSERTProcess"
-    if ($DoNotRunMSERT) {
-        $Message = "Skipping mitigation -DoNotRunMSERT set on $env:computername"
-        $RegMessage = "Skipping mitigation -DoNotRunMSERT"
-        Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
-        return
-    }
 
     #Check for KB4474419
     $OS = [System.Environment]::OSVersion
@@ -812,50 +806,67 @@ try {
     $RegMessage = "EOMT precheck complete"
     Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
 
-    #Execute Mitigation
-    if ($DoNotRunMitigation) {
-        $Stage = "DoNotRunMitigation"
-        $Message = "Skipping mitigation -DoNotRunMitigation set on $env:computername"
-        $RegMessage = "Skipping mitigation -DoNotRunMitigation"
-        Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
-    }
+    $SummaryWritten = $false
 
-    if ($RollbackMitigation) {
+    #Execute Mitigation
+    if (!$RollbackMitigation) {
+        if (!$DoNotRunMitigation) {
+            #Normal run
+            $IsVulnerable = Get-ServerVulnStatus
+            if ($IsVulnerable) {
+                $Message = "$env:computername is vulnerable: applying mitigation"
+                $RegMessage = "Server is vulnerable"
+                Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
+                Run-Mitigate
+
+                $Message = Get-ExchangeUpdateInfo
+                if ($Message) {
+                    $RegMessage = "Prompt to apply updates"
+                    Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
+                }
+            } else {
+                $Message = "$env:computername is not vulnerable: mitigation not needed"
+                $RegMessage = "Server is not vulnerable"
+                Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
+            }
+        }
+        else {
+            $Stage = "DoNotRunMitigation"
+            $Message = "Skipping mitigation -DoNotRunMitigation set on $env:computername"
+            $RegMessage = "Skipping mitigation -DoNotRunMitigation"
+            Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
+        }
+
+        #Execute Msert
+        if (!$DoNotRunMSERT) {
+            if ($RunFullScan) {
+                Run-MSERT -RunFullScan:$RunFullScan -DoNotRemediate:$DoNotRemediate
+            } elseif (!$RollbackMitigation) {
+                Run-MSERT -DoNotRemediate:$DoNotRemediate
+            }
+        }
+        else {
+            $Message = "Skipping mitigation -DoNotRunMSERT set on $env:computername"
+            $RegMessage = "Skipping mitigation -DoNotRunMSERT"
+            Set-LogActivity -Stage "MSERTProcess" -RegMessage $RegMessage -Message $Message
+        }
+
+        if(!$DoNotRunMitigation) {
+            Write-Summary -Pass -NoRemediation:$DoNotRemediate #Pass
+            $SummaryWritten = $true
+        }
+    }
+    else {
         Run-Mitigate -RollbackMitigation
     }
 
-    if (!$DoNotRunMitigation -and !$RollbackMitigation) {
-        #Normal run
-        $IsVulnerable = Get-ServerVulnStatus
-        if ($IsVulnerable) {
-            $Message = "$env:computername is vulnerable: applying mitigation"
-            $RegMessage = "Server is vulnerable"
-            Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
-            Run-Mitigate
-
-            $Message = Get-ExchangeUpdateInfo
-            if ($Message) {
-                $RegMessage = "Prompt to apply updates"
-                Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
-            }
-        } else {
-            $Message = "$env:computername is not vulnerable: mitigation not needed"
-            $RegMessage = "Server is not vulnerable"
-            Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
-        }
-    }
-
-    #Execute Msert
-    if ($RunFullScan) {
-        Run-MSERT -RunFullScan -DoNotRemediate:$DoNotRemediate
-    } elseif (!$RollbackMitigation) {
-        Run-MSERT -DoNotRemediate:$DoNotRemediate
-    }
-
-    $Message = "EOMT.ps1 complete on $env:computername, please review EOMT logs at $EOMTLogFile and the summary file at $SummaryFile"
+    $Message = "EOMT.ps1 complete on $env:computername, please review EOMT logs at $EOMTLogFile"
     $RegMessage = "EOMT.ps1 completed successfully"
+    if($SummaryWritten) {
+        $Message += " and the summary file at $SummaryFile"
+    }
+
     Set-LogActivity -Stage $Stage -RegMessage $RegMessage -Message $Message
-    Write-Summary -Pass -NoRemediation:$DoNotRemediate #Pass
 } catch {
     $Message = "EOMT.ps1 failed to complete on $env:computername, please review EOMT logs at $EOMTLogFile and the summary file at $SummaryFile - $_"
     $RegMessage = "EOMT.ps1 failed to complete"
